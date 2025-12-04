@@ -1,0 +1,10 @@
+# Fichiers Python compilés et caches
+__pycache__/
+*.pyc
+
+# Environnements virtuels
+venv/
+env/
+
+# Fichiers temporaires de Notebooks
+.ipynb_checkpoints/
