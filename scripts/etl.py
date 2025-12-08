@@ -74,9 +74,45 @@ except pyodbc.Error as ex:
     print(ex)
     
 
-# scripts/etl.py
+# ... (Après la section d'extraction des tables de Northwind et d'Access)
+# ... (Après les print("- Extrait la table Orders (830 lignes)."))
 
-# ... (Le code d'Extraction se termine ici)
+# =================================================================
+# ÉTAPE : Exportation des Données Sources (RAW)
+# =================================================================
+print("\n--- Démarrage de l'Exportation des fichiers sources (RAW) ---")
+
+# Chemin de sortie pour les données brutes
+RAW_OUTPUT_DIR = 'data/raw/' 
+
+# Crée le dossier 'data/raw' s'il n'existe pas
+os.makedirs(RAW_OUTPUT_DIR, exist_ok=True)
+
+
+# Le dictionnaire 'raw_data_sql' contient toutes les tables extraites de la BDD Northwind
+dfs_to_export_raw = raw_data_sql.copy() 
+
+# Ajoutez la table des notes clients d'Access (si vous l'avez nommée df_access_customers)
+if 'df_access_customers' in locals():
+    dfs_to_export_raw['Customers_Access_Notes'] = df_access_customers
+
+for name, df in dfs_to_export_raw.items():
+    file_path = os.path.join(RAW_OUTPUT_DIR, f'{name}.csv')
+    try:
+        df.to_csv(
+            file_path,
+            index=False,
+            sep=';',
+            encoding='utf-8'
+        )
+        print(f"  - Exportation de {name}.csv (RAW) réussie vers {RAW_OUTPUT_DIR}.")
+    except Exception as e:
+        print(f"  ❌ Échec de l'exportation de {name}.csv (RAW): {e}")
+
+print("--- Exportation des fichiers sources (RAW) terminée ---")
+
+
+# --- Démarrage de la Transformation (T) ---
 # =================================================================
 # PARTIE 3 : TRANSFORMATION (T)
 # =================================================================
