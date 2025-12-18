@@ -1,101 +1,172 @@
+# Projet BI — Northwind DW 📊
 
+**Résumé :**
+Ce projet met en place un pipeline ETL simple pour construire un Data Warehouse (DW) à partir des sources Northwind (SQL Server + Microsoft Access). Le script principal `scripts/etl.py` extrait, transforme et prépare des tables dimensionnelles et une table de faits. Un notebook d'analyse (`notebooks/analysis_notebook.ipynb`) fournit des visualisations et des vérifications sur le DW construit.
 
-# 📁 README : Projet Business Intelligence Northwind 
+---
 
-## 🎯 1. Vue d'Ensemble du Projet
+## Structure du dépôt 🗂️
 
-Ce projet implémente une solution de Business Intelligence complète, transformant les données opérationnelles de Northwind (SQL Server et Access) en un Data Warehouse (DW) structuré.
+- `scripts/etl.py` : script ETL (Extraction → Transformation → (Chargement))
+- `notebooks/analysis_notebook.ipynb` : notebook d'analyse et visualisation
+- `data/raw/` : export des tables sources brutes (CSV)
+- `data/clean/` : tables nettoyées prêtes à charger dans le DW (CSV)
+- `reports/`, `figures/`, `video/` : livrables et exports
 
-  * **Source de Données** : Base de données Northwind (SQL Server) et données complémentaires (Notes Clients) d'un fichier Access.
-  * **Cible (DW)** : Base de données `NorthwindDW` sur SQL Server (`DESKTOP-F8N2M8C\SQLEXPRESS`).
-  * **Outil d'Analyse** : Microsoft Power BI.
+---
 
-## 🛠️ 2. Choix Techniques et Architecture
+## Prérequis 🔧
 
-### 2.1. Justification du Schéma en Étoile
+- Python 3.8+ recommandé
+- ODBC Driver 17 for SQL Server (pour `pyodbc`)
+- Pilote Microsoft Access (pour `.accdb`) si vous utilisez Access
+- Packages Python (ex.) :
 
-L'architecture du Data Warehouse est basée sur le **Schéma en Étoile** (Star Schema). Ce modèle est optimisé pour la **rapidité d'analyse** et la simplicité de requêtage dans Power BI.
+```powershell
+# Créez et activez un environnement virtuel (Windows PowerShell)
+python -m venv venv; .\venv\Scripts\Activate.ps1
 
-### 2.2. Bibliothèques Python Utilisées
+# Option A — installer depuis `requirements.txt` (recommandé si présent)
+# Créez d'abord le fichier requirements si nécessaire :
+# pip freeze > requirements.txt
+pip install -r requirements.txt
 
-Le script ETL (`etl.py` dans le dossier `scripts/`) utilise :
+# Option B — installer directement (si vous n'avez pas de requirements.txt)
+pip install -U pip
+pip install pandas pyodbc sqlalchemy matplotlib seaborn jupyter
 
-  * **`pandas`** : Transformation, nettoyage, et modélisation des données.
-  * **`pyodbc`** : Connexion aux bases de données SQL Server et Access pour l'extraction.
-  * **`sqlalchemy`** : Chargement des DataFrames dans le Data Warehouse SQL Server.
-
-C'est une excellente idée d'inclure une explication détaillée de votre code ETL dans le `README.md`. Cela montre votre compréhension technique et facilite la reproduction pour l'évaluateur.
-
-Voici la section que vous pouvez utiliser pour expliquer le script `etl.py`, en insistant sur son utilité et son exécution :
-
------
-
-## ⚙️ 3. Explication Détaillée du Script ETL (`scripts/etl.py`)
-
-Le script `etl.py` est le cœur de la solution BI. Il automatise le processus de transformation des données transactionnelles en un Data Warehouse prêt pour l'analyse dans Power BI.
-
-### 3.1. Utilité et Rôle du Script
-
-L'utilité principale du script est de garantir que les données sont **unifiées, nettoyées et structurées** selon le Schéma en Étoile avant l'analyse.
-
-  * **Gestion des Sources Hétérogènes :** Le script résout le problème de la source double en extrayant à la fois les données de **SQL Server** et les données complémentaires des **Notes Clients** du fichier Access.
-  * **Calcul des Métriques Clés :** Il calcule la métrique analytique fondamentale, `SalesAmount` (Montant des ventes après remise), directement dans la phase de transformation.
-  * **Modélisation :** Il crée toutes les tables de dimensions (`DimDate`, `DimCustomers`, `DimProducts`, etc.) et la table de faits (`FactSales`).
-  * **Recharge Complète :** À chaque exécution, il garantit la fraicheur des données en écrasant (`if_exists='replace'`) les anciennes tables dans le Data Warehouse `NorthwindDW`.
-
-### 3.2. Exécution du Script (`etl.py`)
-
-Pour que le script s'exécute correctement, il nécessite une configuration des accès aux données et un environnement Python fonctionnel.
-
-#### A. Prérequis Techniques
-
-1.  **Installation des Dépendances :** Les bibliothèques `pandas`, `pyodbc`, et `sqlalchemy` doivent être installées.
-    ```bash
-    pip install pandas pyodbc sqlalchemy
-    ```
-2.  **Configuration des Connexions :**
-      * Vérifier que le serveur SQL (`DESKTOP-F8N2M8C\SQLEXPRESS`) est accessible.
-      * Mettre à jour la variable `ACCESS_FILE_PATH` dans le script avec le chemin complet de votre fichier Access (`Database1.accdb`).
-
-#### B. Commande d'Exécution
-
-Une fois les dépendances installées et le chemin Access configuré, exécutez le script depuis la racine du projet :
-
-```bash
-python scripts/etl.py
+# Commande unique (PowerShell) pour tout faire en une ligne :
+# python -m venv venv; .\venv\Scripts\Activate.ps1; pip install -U pip; pip install -r requirements.txt
 ```
 
-L'exécution se termine par une vérification de la connexion et le chargement des tables dans le Data Warehouse `NorthwindDW`.
+Astuce : vous pouvez créer un `requirements.txt` à partir des packages ci-dessus.
 
-### 3.3. Utilisation des Données Transformées
+---
 
-Après l'exécution, les données sont prêtes à être utilisées :
+## Configuration de `etl.py` ⚙️
 
-  * **Dans Power BI :** Vous pouvez vous connecter à la source **SQL Server** et sélectionner la base de données `NorthwindDW`. Le modèle sera directement importé dans Power BI, reflétant le Schéma en Étoile.
-  * **Archivage :** Les fichiers CSV propres des dimensions et faits sont également exportés vers le dossier `data/clean/` pour l'archivage et la vérification.
-## 📁 4. Structure de l'Arborescence du Projet
+Avant d'exécuter le script, modifiez les variables en haut de `scripts/etl.py` :
 
-Le projet respecte l'arborescence demandée, en utilisant `figures/` pour les livrables finaux :
+- `SQL_SERVER_NAME` : nom de votre instance SQL Server (ex. `DESKTOP-XXXX\SQLEXPRESS`)
+- `SQL_DATABASE_NAME` : base source (ex. `Northwind`)
+- `ACCESS_FILE_PATH` ou `ACCESS_DB_PATH` : chemin absolu vers le fichier `.accdb` (ex. `r'C:\Users\...\Northwind.accdb'`)
+- `RAW_OUTPUT_DIR` : dossier où exporter les CSV bruts (par défaut `data/raw/`)
 
+Remarque : le script utilise la connexion Windows (Trusted Connection). Si vous avez besoin d'authentification SQL (login/password), adaptez la chaîne de connexion.
+
+---
+
+## Exécution du pipeline ETL ▶️
+
+1. Activez votre environnement virtuel (voir la section Prérequis).
+2. Assurez-vous que SQL Server et Access sont accessibles depuis votre machine (drivers installés).
+3. Lancez le script :
+
+```powershell
+python scripts\etl.py
 ```
-Nom_Du_Projet_Northwind/
-├── data/
-│   ├── raw/           # Données extraites brutes
-│   └── clean/         # Données transformées (Schéma en Étoile)
-├── scripts/           # Code Python
-│   └── etl.py         # Le pipeline ETL
-├── figures/           # Livrables : .pbix, Rapport PDF, Screenshots
-├── video/             # La vidéo de présentation
-├── notebooks/         
-└── README.md          # Le présent fichier
+
+Comportement attendu :
+- Les tables sources sont extraites depuis SQL Server et Access.
+- Les exports bruts sont sauvegardés dans `data/raw/` (si la partie d'export est activée).
+- Les dimensions (DimDate, DimCustomers, DimProducts, DimEmployees, DimShippers) et la table de faits (FactSales) sont construites en mémoire.
+- Le bloc de chargement vers le Data Warehouse (DW) est prêt mais commenté par défaut — vous pouvez utiliser `sqlalchemy.create_engine` pour charger vers votre cible.
+
+---
+
+## Détails du script ETL (fichier : `scripts/etl.py`) 🔍
+
+Le script est organisé en étapes séquentielles (E → T → L) exécutées lorsque vous lancez `python scripts/etl.py` :
+
+1. Extraction (E)
+   - SQL Server : connexion via `pyodbc` et `SQL_CONN_STRING`. Tables extraites : `Orders`, `Order Details`, `Customers`, `Products`, `Categories`, `Employees`, `Shippers`, `Suppliers`.
+   - Microsoft Access (optionnel) : si `ACCESS_DB_PATH` est configuré, le script lit des tables complémentaires (ex. `Customers_Access`, `OrderDetails_Access`) et les stocke dans `data_access`.
+
+2. Export RAW (optionnel)
+   - Les DataFrames extraits peuvent être exportés dans `data/raw/` en CSV (`;` séparateur). Contrôlez le chemin via `RAW_OUTPUT_DIR`.
+
+3. Consolidation multi-source
+   - Si la source Access est disponible, les tables équivalentes (Orders, OrderDetails, Customers, Products, Suppliers) sont concaténées à la source SQL. Le script donne la priorité aux lignes SQL (drop_duplicates keep='first') et supprime les doublons sur clés logiques (ex. `OrderID`, `ProductID`).
+
+4. Transformation (T)
+   - DimDate : conversion des dates en clé `DateKey` (YYYYMMDD) et création des attributs temporels (Year, Quarter, Month, Day, DayName, MonthName).
+   - DimCustomers : concaténation SQL + Access, normalisation/renommage (`CustomerKey`, `CustomerNotes`, ...), ajout de la colonne `Notes` si absente.
+   - DimProducts : consolidation produits + jointure avec `Categories` pour obtenir `CategoryName` et `StandardPrice`.
+   - DimEmployees/DimShippers/DimSuppliers : renommages et sélection des attributs utiles.
+   - FactSales : fusion `OrderDetails` + `Orders`, renommage `UnitPrice`→`SaleUnitPrice`, calcul `SalesAmount = Quantity * SaleUnitPrice * (1 - Discount)`, création des clés de date (`OrderDateKey`, `ShippedDateKey`) et sélection finale des colonnes de faits.
+
+5. Export CLEAN
+   - Les dimensions et la table de faits sont exportées dans `data/clean/` en CSV prêts pour chargement ou audit.
+
+6. Chargement (L) vers le Data Warehouse (optionnel, sécurisé)
+   - Connexion SQLAlchemy via `create_engine()` et `SQL_DW_CONN_STRING`.
+   - Chargement des dimensions avec `to_sql(..., if_exists='replace')`.
+   - Pour `FactSales`, le script charge d'abord dans `FactSales_Staging` puis exécute un `DELETE` + `INSERT` en production (transactionnel) pour éviter les incohérences.
+
+Bonnes pratiques, tests & dépannage 🛠️
+- Pour tester uniquement l'extraction : commentez les blocs Transformation/Chargement ou exécutez le script par pas dans un REPL.
+- Évitez d'écraser une base de production : testez d'abord sur `NorthwindDW` de dev.
+- Si Access n'est pas disponible, le script fonctionne en mode SQL-only (consultez les messages d'erreur imprimés).
+- Pour rendre le script réutilisable : envisagez de le refactorer en fonctions et d'ajouter des options CLI (`--skip-load`, `--export-raw`, `--dw-conn`).
+
+
+---
+
+## Chargement vers le Data Warehouse (optionnel) 🏗️
+
+Le code contient un emplacement pour créer une connexion SQLAlchemy et charger les DataFrames :
+
+```python
+# Exemple (décommentez et adaptez) :
+from sqlalchemy import create_engine
+sql_dw_engine = create_engine('mssql+pyodbc://<SERVER>/<DB>?driver=ODBC+Driver+17+for+SQL+Server')
+DimCustomers.to_sql('DimCustomers', sql_dw_engine, if_exists='replace', index=False)
+FactSales.to_sql('FactSales', sql_dw_engine, if_exists='replace', index=False)
 ```
 
-## 📊 5. Livrables et Résultats
+Conseils :
+- Testez d'abord sur une base de dev `NorthwindDW` avant d'écraser une base de production.
+- L'import `create_engine` est volontairement présent et annoté pour éviter les avertissements linters si le bloc reste commenté.
 
-Les produits finaux du projet sont disponibles dans le dossier `figures/` : le **Tableau de Bord** (.pbix).
-la documentation est dans le dossier `reports/`
-les tableaux CSV sont dans les dossier **resulta*** `data/clean` **source**`data/raw`
-les script etl.py **le code d'extraction transformation chargemment** est dans le dossier `scripts`
+---
 
-# remarque 
-le dossier venv ent utilser pour telechrger l'environment vertuel pour excuter le ETL son problem de biblioteque ponda
+## Utilisation du Notebook d'analyse 🧪
+
+Le notebook `notebooks/analysis_notebook.ipynb` contient des cellules pour :
+- Se connecter au DW (mettez à jour `SQL_DW_SERVER` et `SQL_DW_DATABASE` dans le notebook si besoin).
+- Exécuter des requêtes d'agrégation sur `FactSales` et les dimensions.
+- Produire des graphiques (tendance des ventes, top employés, répartition par catégorie, etc.).
+
+Pour l'utiliser :
+
+```powershell
+jupyter notebook notebooks\analysis_notebook.ipynb
+```
+
+Ou ouvrez le notebook depuis VS Code (extension Jupyter) et exécutez les cellules dans l'ordre.
+
+---
+
+## Résolution des problèmes courants ⚠️
+
+- Erreur de connexion `pyodbc.Error`: vérifiez le nom du serveur, le nom de la base, et que le driver ODBC est installé.
+- Problème avec Access: vérifiez l'installation du pilote Access (32 vs 64 bits) et utilisez le chemin absolu vers `.accdb`.
+- Avertissement linter « import 'create_engine' is not accessed » : l'import est volontaire, il est annoté dans le code (`# noqa: F401`) car le chargement est optionnel.
+
+---
+
+## Fichiers de sortie 📁
+
+- `data/raw/` : tables originales exportées (CSV)
+- `data/clean/` : résultats de transformation (CSV) prêts à être chargés
+
+---
+
+
+## Auteurs & Licence ✍️
+
+- Auteur : SeddikDjebbar (adaptations personnelles)
+
+---
+
+Bonne utilisation ! ✅
