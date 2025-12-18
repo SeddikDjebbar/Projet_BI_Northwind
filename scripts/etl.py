@@ -2,6 +2,7 @@ import pandas as pd
 import pyodbc
 import os
 from sqlalchemy import create_engine  # noqa: F401  # Utilisé dans la partie Chargement (L)
+from sqlalchemy import text
 # =================================================================
 # PARTIE 1 : EXTRACTION SQL SERVER
 # =================================================================
@@ -33,7 +34,8 @@ try:
         'Products': 'SELECT * FROM Products',
         'Categories': 'SELECT * FROM Categories',
         'Employees': 'SELECT * FROM Employees',
-        'Shippers': 'SELECT * FROM Shippers'
+        'Shippers': 'SELECT * FROM Shippers',
+        'Suppliers': 'SELECT * FROM Suppliers'
     }
 
     raw_data_sql = {}
@@ -49,34 +51,6 @@ except pyodbc.Error as ex:
 # =================================================================
 # PARTIE 2 : EXTRACTION ACCESS
 # =================================================================
-
-# ⚠️ À ADAPTER : Mettez ici le chemin COMPLET vers votre fichier Northwind Access !
-# Exemple: r'C:\Users\tk computer\Documents\Northwind.accdb'
-ACCESS_FILE_PATH = r'C:/Users/tk computer/OneDrive/Documents/Database1.accdb' 
-
-ACCESS_CONN_STRING = (
-    r'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};'
-    f'DBQ={ACCESS_FILE_PATH};'
-)
-
-print(f"\nTentative de connexion à Access: {os.path.basename(ACCESS_FILE_PATH)}")
-
-try:
-    access_conn = pyodbc.connect(ACCESS_CONN_STRING)
-    print("✅ Connexion à Access réussie.")
-
-    # Extrait les données complémentaires/contradictoires d'Access (ici, les Notes des clients)
-    df_access_customers = pd.read_sql("SELECT CustomerID, Notes FROM Customers", access_conn)
-    print(f"- Extrait les données complémentaires d'Access ({len(df_access_customers)} lignes).")
-
-except pyodbc.Error as ex:
-    print(f"❌ Erreur de connexion à Access.")
-    print(ex)
-    
-
-# ... (Après la section d'extraction des tables de Northwind et d'Access)
-# ... (Après les print("- Extrait la table Orders (830 lignes)."))
-
 # =================================================================
 # ÉTAPE : Exportation des Données Sources (RAW)
 # =================================================================
@@ -111,30 +85,130 @@ for name, df in dfs_to_export_raw.items():
 
 print("--- Exportation des fichiers sources (RAW) terminée ---")
 
+# =================================================================
+# PARTIE 1 BIS : EXTRACTION ACCESS (Source Secondaire)
+# =================================================================
 
+# Configuration de la connexion Access (CHEMIN ABSOLU UTILISÉ POUR LA FIABILITÉ)
+# Le 'r' devant la chaîne sert à ignorer les séquences d'échappement dans les chemins Windows.
+ACCESS_DB_PATH = r'C:\Users\tk computer\OneDrive\Bureau\etude\BI\Projet_BI_Northwind\data\Northwind 2012.accdb' 
+ACCESS_DRIVER = '{Microsoft Access Driver (*.mdb, *.accdb)}' 
+
+ACCESS_CONN_STRING = (
+    f'DRIVER={ACCESS_DRIVER};'
+    f'DBQ={ACCESS_DB_PATH};'
+)
+
+data_access = {}
+print(f"\nTentative de connexion à la source Access: {ACCESS_DB_PATH}")
+try:
+    access_conn = pyodbc.connect(ACCESS_CONN_STRING)
+    print("✅ Connexion à Access réussie.")
+
+    queries_access = {
+        'Customers_Access': 'SELECT * FROM Customers',
+        'Products_Access': 'SELECT * FROM Products',
+        'Suppliers_Access': 'SELECT * FROM Suppliers',
+        'Orders_Access': 'SELECT * FROM Orders',
+        'OrderDetails_Access': 'SELECT * FROM "Order Details"',
+    }
+    
+    for table_name, query in queries_access.items():
+        print(f"  - Extraction de {table_name}...")
+        data_access[table_name] = pd.read_sql(query, access_conn) 
+        
+    access_conn.close()
+    print("✅ Extraction des tables de la source Access terminée.")
+
+except pyodbc.Error as e:
+    print(f"❌ Échec de la connexion/extraction Access. L'analyse des deux sources sera limitée. Détails: {e}")
+    data_access = {}
 # --- Démarrage de la Transformation (T) ---
+# =================================================================
 # =================================================================
 # PARTIE 3 : TRANSFORMATION (T)
 # =================================================================
 
 print("\n--- Démarrage de la Transformation (T) ---")
 
+# =================================================================
+# >>> AJOUT MULTI-SOURCE : CONSOLIDATION DES SOURCES <<<
+# Nous utilisons maintenant les DATA CONSOLIDÉES pour toutes les transformations.
+# =================================================================
+
+# Nous devons d'abord nous assurer que tous les DataFrames existent, sinon nous utilisons uniquement la source SQL.
+# -----------------------------------------------------------------
+# 3.0 CONSOLIDATION DES DONNÉES DE FAITS (Orders et OrderDetails)
+# -----------------------------------------------------------------
+
+# Consolidation des commandes (Orders)
+# La source principale est data['Orders'] (ou raw_data_sql['Orders']).
+# Nous allons renommer raw_data_sql en data pour simplifier.
+data = raw_data_sql 
+
+if 'Orders_Access' in data_access:
+    # On concatène les données de SQL Server et Access, en ignorant l'index.
+    Orders_Combined = pd.concat([data['Orders'], data_access['Orders_Access']], ignore_index=True)
+    print(f"  - Commandes consolidées : {len(data['Orders'])} (SQL) + {len(data_access['Orders_Access'])} (Access) -> {len(Orders_Combined)} (Total)")
+else:
+    Orders_Combined = data['Orders'].copy()
+    print("  - Utilisation uniquement des commandes SQL Server.")
+
+# Consolidation des détails de commandes (OrderDetails)
+if 'OrderDetails_Access' in data_access:
+    # On concatène les données de SQL Server et Access.
+    OrderDetails_Combined = pd.concat([data['OrderDetails'], data_access['OrderDetails_Access']], ignore_index=True)
+    print(f"  - Détails consolidés : {len(data['OrderDetails'])} (SQL) + {len(data_access['OrderDetails_Access'])} (Access) -> {len(OrderDetails_Combined)} (Total)")
+else:
+    OrderDetails_Combined = data['OrderDetails'].copy()
+    print("  - Utilisation uniquement des détails SQL Server.")
+# -----------------------------------------------------------------
+# 3.0 CONSOLIDATION DES DONNÉES DE FAITS (Orders et OrderDetails)
+# -----------------------------------------------------------------
+
+# ... (Le code pour Orders_Combined reste inchangé) ...
+
+# Consolidation des détails de commandes (OrderDetails)
+if 'OrderDetails_Access' in data_access:
+    # On concatène les données de SQL Server et Access.
+    OrderDetails_Combined = pd.concat([data['OrderDetails'], data_access['OrderDetails_Access']], ignore_index=True)
+    
+    # === NOUVEAU : Dédupliquer les lignes de détail ===
+    # Une ligne est unique par la combinaison de l'OrderID et du ProductID.
+    initial_len = len(OrderDetails_Combined)
+    OrderDetails_Combined.drop_duplicates(subset=['OrderID', 'ProductID'], keep='first', inplace=True)
+    
+    if len(OrderDetails_Combined) < initial_len:
+         print(f"  - Détails de commande : {initial_len - len(OrderDetails_Combined)} doublons retirés.")
+
+    print(f"  - Détails consolidés : {len(data['OrderDetails'])} (SQL) + {len(data_access['OrderDetails_Access'])} (Access) -> {len(OrderDetails_Combined)} (Total Net)")
+else:
+    OrderDetails_Combined = data['OrderDetails'].copy()
+    print("  - Utilisation uniquement des détails SQL Server.")
+
+
+# === NOUVEAU : Vérification de la taille de FactSales après création ===
+# (Ajouter ces lignes juste après la création de FactSales en 3.5)
+# ...
+
+
+
 # -----------------------------------------------------------------
 # 3.1 Création et Nettoyage de la Dimension Date (DimDate)
 # -----------------------------------------------------------------
 
-# Extrait toutes les dates uniques de la table Orders
+# Extrait toutes les dates uniques de la table Orders CONSOLIDÉE
 dates = pd.concat([
-    raw_data_sql['Orders']['OrderDate'],
-    raw_data_sql['Orders']['RequiredDate'],
-    raw_data_sql['Orders']['ShippedDate']
+    Orders_Combined['OrderDate'], # Utilise les commandes consolidées
+    Orders_Combined['RequiredDate'], # Utilise les commandes consolidées
+    Orders_Combined['ShippedDate'] # Utilise les commandes consolidées
 ]).drop_duplicates().dropna().to_frame(name='DateKey')
 
 dates['DateKey'] = pd.to_datetime(dates['DateKey'])
 dates.rename(columns={'DateKey': 'Date'}, inplace=True)
 dates['DateKey'] = dates['Date'].dt.strftime('%Y%m%d').astype(int)
 
-# Création des attributs de temps
+# Création des attributs de temps (votre code est correct ici)
 dates['Year'] = dates['Date'].dt.year
 dates['Quarter'] = dates['Date'].dt.quarter
 dates['Month'] = dates['Date'].dt.month
@@ -145,31 +219,35 @@ dates['MonthName'] = dates['Date'].dt.month_name()
 DimDate = dates[['DateKey', 'Date', 'Year', 'Quarter', 'Month', 'Day', 'DayName', 'MonthName']]
 print(f"- Création de DimDate (clés uniques : {len(DimDate)}).")
 
-
 # -----------------------------------------------------------------
 # 3.2 Création de la Dimension Clients (DimCustomers)
 # -----------------------------------------------------------------
 
-# >>> CORRIGER LE TYPE DE DONNÉES <<<
-raw_data_sql['Customers_SQL']['CustomerID'] = raw_data_sql['Customers_SQL']['CustomerID'].astype(str)
-df_access_customers['CustomerID'] = df_access_customers['CustomerID'].astype(str)
+# >>> AJOUT MULTI-SOURCE : CONCATENATION <<<
+if 'Customers_Access' in data_access:
+    customers_sql = data['Customers_SQL'].copy()
+    customers_access = data_access['Customers_Access'].copy()
+    
+    # CONCATÉNATION et SUPPRESSION des doublons (priorité à SQL Server)
+    DimCustomers_Raw = pd.concat([customers_sql, customers_access]).drop_duplicates(subset=['CustomerID'], keep='first')
+    print(f"  - Clients consolidés : {len(DimCustomers_Raw)} lignes.")
+else:
+    DimCustomers_Raw = data['Customers_SQL'].copy()
+    print("  - Utilisation uniquement des clients SQL Server.")
 
-# Fusion des données de Customers SQL et Access
-DimCustomers = raw_data_sql['Customers_SQL'].merge(
-    df_access_customers, 
-    on='CustomerID', 
-    how='left'
-)
+# >>> CORRECTION KEYERROR : Ajoute la colonne Notes si elle manque (cas où Access échoue) <<<
+if 'Notes' not in DimCustomers_Raw.columns:
+    DimCustomers_Raw['Notes'] = None 
 
-# Renommage et sélection des colonnes
-DimCustomers.rename(columns={
+# Renommage et sélection des colonnes (utilise DimCustomers_Raw)
+DimCustomers = DimCustomers_Raw.rename(columns={
     'CustomerID': 'CustomerKey',
     'ContactName': 'CustomerContactName',
     'CompanyName': 'CustomerCompanyName',
     'Country': 'CustomerCountry',
     'City': 'CustomerCity',
     'Notes': 'CustomerNotes'
-}, inplace=True)
+})
 
 # Nettoyage et sélection des attributs
 DimCustomers = DimCustomers[[
@@ -178,19 +256,30 @@ DimCustomers = DimCustomers[[
 ]]
 print(f"- Création de DimCustomers ({len(DimCustomers)} lignes).")
 
-
 # -----------------------------------------------------------------
 # 3.3 Création de la Dimension Produits (DimProducts)
 # -----------------------------------------------------------------
 
-# Fusion Products et Categories
-DimProducts = raw_data_sql['Products'].merge(
-    raw_data_sql['Categories'], 
+# >>> AJOUT MULTI-SOURCE : CONCATENATION PRODUITS <<<
+if 'Products_Access' in data_access:
+    products_sql = data['Products'].copy()
+    products_access = data_access['Products_Access'].copy()
+    
+    # CONCATÉNATION et SUPPRESSION des doublons (priorité à SQL Server)
+    DimProducts_Raw = pd.concat([products_sql, products_access]).drop_duplicates(subset=['ProductID'], keep='first')
+    print(f"  - Produits consolidés : {len(DimProducts_Raw)} lignes.")
+else:
+    DimProducts_Raw = data['Products'].copy()
+    print("  - Utilisation uniquement des produits SQL Server.")
+    
+# Fusion DimProducts_Raw (consolidée) et Categories (issue de SQL Server)
+DimProducts = DimProducts_Raw.merge(
+    data['Categories'], # Categories n'est pas dans Access, donc on utilise SQL
     on='CategoryID', 
     how='left'
 )
 
-# Renommage et sélection des colonnes
+# Renommage et sélection des colonnes (votre code est correct)
 DimProducts.rename(columns={
     'ProductID': 'ProductKey',
     'ProductName': 'ProductName',
@@ -207,18 +296,34 @@ print(f"- Création de DimProducts ({len(DimProducts)} lignes).")
 
 
 # -----------------------------------------------------------------
-# 3.4 Création des autres Dimensions (Employees, Shippers)
+# 3.4 Création des autres Dimensions (Employees, Shippers, Suppliers)
 # -----------------------------------------------------------------
 
-# DimEmployees
-DimEmployees = raw_data_sql['Employees'].rename(columns={'EmployeeID': 'EmployeeKey'})
+# DimEmployees (Non affecté par Access dans notre plan)
+DimEmployees = data['Employees'].rename(columns={'EmployeeID': 'EmployeeKey'})
 DimEmployees = DimEmployees[['EmployeeKey', 'LastName', 'FirstName', 'Title', 'City', 'Country']]
 print(f"- Création de DimEmployees ({len(DimEmployees)} lignes).")
 
-# DimShippers
-DimShippers = raw_data_sql['Shippers'].rename(columns={'ShipperID': 'ShipperKey', 'CompanyName': 'ShipperCompanyName'})
+# DimShippers (Non affecté par Access dans notre plan)
+DimShippers = data['Shippers'].rename(columns={'ShipperID': 'ShipperKey', 'CompanyName': 'ShipperCompanyName'})
 DimShippers = DimShippers[['ShipperKey', 'ShipperCompanyName']]
 print(f"- Création de DimShippers ({len(DimShippers)} lignes).")
+
+# >>> AJOUT MULTI-SOURCE : CONCATENATION FOURNISSEURS <<<
+if 'Suppliers_Access' in data_access:
+    suppliers_sql = data['Suppliers'].copy()
+    suppliers_access = data_access['Suppliers_Access'].copy()
+    
+    # CONCATÉNATION et SUPPRESSION des doublons (priorité à SQL Server)
+    DimSuppliers_Raw = pd.concat([suppliers_sql, suppliers_access]).drop_duplicates(subset=['SupplierID'], keep='first')
+    print(f"  - Fournisseurs consolidés : {len(DimSuppliers_Raw)} lignes.")
+else:
+    DimSuppliers_Raw = data['Suppliers'].copy()
+    print("  - Utilisation uniquement des fournisseurs SQL Server.")
+
+DimSuppliers = DimSuppliers_Raw.rename(columns={'SupplierID': 'SupplierKey', 'CompanyName': 'SupplierCompanyName'})
+DimSuppliers = DimSuppliers[['SupplierKey', 'SupplierCompanyName', 'Country']]
+print(f"- Création de DimSuppliers ({len(DimSuppliers)} lignes).")
 
 
 # -----------------------------------------------------------------
@@ -226,21 +331,22 @@ print(f"- Création de DimShippers ({len(DimShippers)} lignes).")
 # -----------------------------------------------------------------
 
 # ⚠️ CORRECTION : Renommer la colonne UnitPrice dans OrderDetails avant la jointure
-# (afin d'éviter le suffixe ambigu '_x' et s'assurer que le prix utilisé est le prix unitaire de la commande)
-raw_data_sql['OrderDetails'].rename(columns={'UnitPrice': 'SaleUnitPrice'}, inplace=True)
+# (Utilise OrderDetails_Combined)
+OrderDetails_Combined.rename(columns={'UnitPrice': 'SaleUnitPrice'}, inplace=True)
 
-# Jointure des Orders et OrderDetails
-FactSales = raw_data_sql['OrderDetails'].merge(
-    raw_data_sql['Orders'],
+# Jointure des Orders et OrderDetails CONSOLIDÉS
+FactSales = OrderDetails_Combined.merge(
+    Orders_Combined, # Utilise les commandes consolidées
     on='OrderID',
     how='left'
 )
 
 # Calcul du prix unitaire total après remise
-# MODIFIER 'UnitPrice_x' par 'SaleUnitPrice'
 FactSales['SalesAmount'] = FactSales['Quantity'] * FactSales['SaleUnitPrice'] * (1 - FactSales['Discount'])
 
 # Jointure des clés de date (Conversion des dates en clés entières)
+# Le reste de votre code de jointure des clés est correct, il est important qu'il soit après la fusion.
+
 FactSales = FactSales.merge(
     DimDate[['Date', 'DateKey']], 
     left_on='OrderDate', 
@@ -255,23 +361,17 @@ FactSales = FactSales.merge(
     how='left'
 ).rename(columns={'DateKey': 'ShippedDateKey'}).drop(columns=['Date'])
 
-# Renommage final des clés et sélection des mesures et clés
-# FactSales.rename(columns={
-#     'CustomerID': 'CustomerKey',
-#     'EmployeeID': 'EmployeeKey',
-#     'ShipperID': 'ShipperKey',
-#     'ProductID': 'ProductKey',
-#     'Quantity': 'OrderQuantity'
-# }, inplace=True)
-
-# --- CORRECTIF : Renommer les colonnes pour correspondre au schéma cible ---
+# --- CORRECTION : Renommer les colonnes pour correspondre au schéma cible ---
 FactSales.rename(columns={
-    'ShipVia': 'ShipperID',      # De la table Orders
-    'Quantity': 'OrderQuantity',  # De la table Order Details
-    'UnitPrice_x': 'SaleUnitPrice' # (Si 'UnitPrice_x' est le nom après votre merge)
+    'ShipVia': 'ShipperID', 
+    'Quantity': 'OrderQuantity',
+    # Note : 'SaleUnitPrice' a déjà été renommé au début du bloc.
+    # Note : Assurez-vous que les colonnes CustomerID, EmployeeID, ProductID sont présentes.
 }, inplace=True)
 
 # Sélection finale des colonnes de la Fact table
+# N.B. : Il manque la colonne SupplierID dans la Fact Table si elle n'est pas dans OrderDetails ou Orders. 
+# Je suppose que votre Fact Table est correcte avec les colonnes listées.
 FactSales = FactSales[[
     'OrderID', 
     'CustomerID', 
@@ -289,13 +389,6 @@ FactSales = FactSales[[
 
 print(f"- Création de FactSales ({len(FactSales)} lignes).")
 print("--- Transformation (T) terminée ---")
-import os
-# ... (votre code d'extraction et de transformation)
-
-# --- Démarrage de la Transformation (T) ---
-# ... (votre code de création des Dim et Fact)
-# --- Transformation (T) terminée ---
-
 # =================================================================
 # ÉTAPE : Exportation des DataFrames (CSV)
 # =================================================================
@@ -366,19 +459,19 @@ except Exception as e:
     
 # --- 3. CHARGEMENT DES TABLES (Dimensions et Faits) ---
 
-# Liste des DataFrames à charger
+# Liste des DataFrames à charger (SANS FactSales)
 tables_a_charger = {
     'DimDate': DimDate, 
     'DimCustomers': DimCustomers, 
     'DimProducts': DimProducts,
     'DimEmployees': DimEmployees,
     'DimShippers': DimShippers,
-    'FactSales': FactSales 
+    'DimSuppliers': DimSuppliers
 }
 
 print("\n--- Démarrage du Chargement des tables ---")
 
-# Boucle de chargement
+# Boucle de chargement pour les Dimensions
 for table_name, df in tables_a_charger.items():
     try:
         df.to_sql(
@@ -391,10 +484,31 @@ for table_name, df in tables_a_charger.items():
     except Exception as e:
         print(f"  ❌ Échec du chargement de la table {table_name}: {e}")
 
+# === NOUVEAU : CHARGEMENT DE FACTSALES SÉPARÉ (Plus sûr) ===
+# 1. Chargement dans une table de staging (Staging)
+try:
+    print(f"  - Chargement de la table FactSales dans STAGING ({len(FactSales)} lignes)...")
+    FactSales.to_sql(
+        name='FactSales_Staging', 
+        con=sql_dw_engine, 
+        if_exists='replace', 
+        index=False
+    )
+    
+    # 2. Remplacement du contenu de la table de production par les données de staging
+    with sql_dw_engine.begin() as connection:
+        # Supprime toutes les lignes de FactSales
+        connection.execute(text("DELETE FROM FactSales;")) # Utilisez 'text' de sqlalchemy
+        
+        # Insère toutes les lignes de Staging dans FactSales
+        connection.execute(text("INSERT INTO FactSales SELECT * FROM FactSales_Staging;"))
+
+    print(f"  - Chargement de la table FactSales ({len(FactSales)} lignes) réussi via Staging.")
+    
+except Exception as e:
+    print(f"  ❌ Échec du chargement de la table FactSales: {e}")
 
 print("\n--- Chargement (L) terminé ---")
 
-# --- 4. NETTOYAGE ---
-# Fermeture de la connexion (Bonne pratique)
-if 'sql_dw_engine' in locals():
-    sql_dw_engine.dispose()
+# Assurez-vous d'ajouter from sqlalchemy import create_engine, text
+# en tête du script si 'text' n'est pas déjà importé.
