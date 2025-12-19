@@ -159,6 +159,10 @@ Ou ouvrez le notebook depuis VS Code (extension Jupyter) et exécutez les cellul
 
 - `data/raw/` : tables originales exportées (CSV)
 - `data/clean/` : résultats de transformation (CSV) prêts à être chargés
+- `figures/` : graphiques interactifs exportés depuis le notebook (`.html`).
+  - Fichiers générés : `tendance_ventes_mensuelles.html`, `performance_employes.html`, `distribution_categories.html`, `comparaison_categories.html`, `ventes_par_pays.html`, `etat_livraisons.html`, `top_produits.html`.
+  - Ouvrez ces fichiers dans un navigateur web pour interagir (zoom, hover, export). Pour exporter des images (PNG/SVG) depuis le notebook, installez `kaleido` et utilisez `fig.write_image()`.
+
 
 ---
 

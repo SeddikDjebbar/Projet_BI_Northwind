@@ -49,44 +49,7 @@ except pyodbc.Error as ex:
 
 
 # =================================================================
-# PARTIE 2 : EXTRACTION ACCESS
-# =================================================================
-# =================================================================
-# ÉTAPE : Exportation des Données Sources (RAW)
-# =================================================================
-print("\n--- Démarrage de l'Exportation des fichiers sources (RAW) ---")
-
-# Chemin de sortie pour les données brutes
-RAW_OUTPUT_DIR = 'data/raw/' 
-
-# Crée le dossier 'data/raw' s'il n'existe pas
-os.makedirs(RAW_OUTPUT_DIR, exist_ok=True)
-
-
-# Le dictionnaire 'raw_data_sql' contient toutes les tables extraites de la BDD Northwind
-dfs_to_export_raw = raw_data_sql.copy() 
-
-# Ajoutez la table des notes clients d'Access (si vous l'avez nommée df_access_customers)
-if 'df_access_customers' in locals():
-    dfs_to_export_raw['Customers_Access_Notes'] = df_access_customers
-
-for name, df in dfs_to_export_raw.items():
-    file_path = os.path.join(RAW_OUTPUT_DIR, f'{name}.csv')
-    try:
-        df.to_csv(
-            file_path,
-            index=False,
-            sep=';',
-            encoding='utf-8'
-        )
-        print(f"  - Exportation de {name}.csv (RAW) réussie vers {RAW_OUTPUT_DIR}.")
-    except Exception as e:
-        print(f"  ❌ Échec de l'exportation de {name}.csv (RAW): {e}")
-
-print("--- Exportation des fichiers sources (RAW) terminée ---")
-
-# =================================================================
-# PARTIE 1 BIS : EXTRACTION ACCESS (Source Secondaire)
+# PARTIE 2 : EXTRACTION ACCESS (Source Secondaire)
 # =================================================================
 
 # Configuration de la connexion Access (CHEMIN ABSOLU UTILISÉ POUR LA FIABILITÉ)
@@ -123,6 +86,109 @@ try:
 except pyodbc.Error as e:
     print(f"❌ Échec de la connexion/extraction Access. L'analyse des deux sources sera limitée. Détails: {e}")
     data_access = {}
+
+# =================================================================
+# ÉTAPE : Exportation des Données Sources (RAW)
+# =================================================================
+print("\n--- Démarrage de l'Exportation des fichiers sources (RAW) ---")
+
+# Chemin de sortie pour les données brutes
+RAW_OUTPUT_DIR = 'data/raw/' 
+
+# Crée le dossier 'data/raw' s'il n'existe pas
+os.makedirs(RAW_OUTPUT_DIR, exist_ok=True)
+
+# Le dictionnaire 'raw_data_sql' contient toutes les tables extraites de la BDD Northwind
+dfs_to_export_raw = raw_data_sql.copy() 
+
+# Consolidation des données Access avec les données SQL pour l'export RAW
+# Pour chaque table qui existe dans les deux sources, on les concatène
+if data_access:
+    # Consolidation des Orders
+    if 'Orders_Access' in data_access:
+        Orders_Raw = pd.concat([raw_data_sql['Orders'], data_access['Orders_Access']], ignore_index=True)
+        dfs_to_export_raw['Orders'] = Orders_Raw
+        print(f"  - Orders consolidés pour RAW : {len(raw_data_sql['Orders'])} (SQL) + {len(data_access['Orders_Access'])} (Access) = {len(Orders_Raw)} (Total)")
+    
+    # Consolidation des OrderDetails
+    if 'OrderDetails_Access' in data_access:
+        OrderDetails_Raw = pd.concat([raw_data_sql['OrderDetails'], data_access['OrderDetails_Access']], ignore_index=True)
+        # Suppression des doublons basés sur OrderID et ProductID
+        initial_len = len(OrderDetails_Raw)
+        OrderDetails_Raw.drop_duplicates(subset=['OrderID', 'ProductID'], keep='first', inplace=True)
+        dfs_to_export_raw['OrderDetails'] = OrderDetails_Raw
+        if len(OrderDetails_Raw) < initial_len:
+            print(f"  - OrderDetails consolidés pour RAW : {initial_len} -> {len(OrderDetails_Raw)} (après déduplication)")
+        else:
+            print(f"  - OrderDetails consolidés pour RAW : {len(raw_data_sql['OrderDetails'])} (SQL) + {len(data_access['OrderDetails_Access'])} (Access) = {len(OrderDetails_Raw)} (Total)")
+    
+    # Consolidation des Customers
+    if 'Customers_Access' in data_access:
+        Customers_Raw = pd.concat([raw_data_sql['Customers_SQL'], data_access['Customers_Access']], ignore_index=True)
+        # Suppression des doublons basés sur CustomerID (priorité à SQL)
+        Customers_Raw.drop_duplicates(subset=['CustomerID'], keep='first', inplace=True)
+        dfs_to_export_raw['Customers_SQL'] = Customers_Raw
+        print(f"  - Customers consolidés pour RAW : {len(Customers_Raw)} lignes (après déduplication)")
+    
+    # Consolidation des Products
+    if 'Products_Access' in data_access:
+        Products_Raw = pd.concat([raw_data_sql['Products'], data_access['Products_Access']], ignore_index=True)
+        # Suppression des doublons basés sur ProductID (priorité à SQL)
+        Products_Raw.drop_duplicates(subset=['ProductID'], keep='first', inplace=True)
+        dfs_to_export_raw['Products'] = Products_Raw
+        print(f"  - Products consolidés pour RAW : {len(Products_Raw)} lignes (après déduplication)")
+    
+    # Consolidation des Suppliers
+    if 'Suppliers_Access' in data_access:
+        Suppliers_Raw = pd.concat([raw_data_sql['Suppliers'], data_access['Suppliers_Access']], ignore_index=True)
+        # Suppression des doublons basés sur SupplierID (priorité à SQL)
+        Suppliers_Raw.drop_duplicates(subset=['SupplierID'], keep='first', inplace=True)
+        dfs_to_export_raw['Suppliers'] = Suppliers_Raw
+        print(f"  - Suppliers consolidés pour RAW : {len(Suppliers_Raw)} lignes (après déduplication)")
+    
+    # Export des notes clients d'Access si elles existent
+    if 'Customers_Access' in data_access:
+        # Extraire uniquement les colonnes Notes si elles existent
+        customers_access_df = data_access['Customers_Access']
+        # Vérifier quelles colonnes existent (peut être CustomerID ou autre)
+        id_column = None
+        for col in ['CustomerID', 'Customer Id', 'ID', 'Id']:
+            if col in customers_access_df.columns:
+                id_column = col
+                break
+        
+        if 'Notes' in customers_access_df.columns and id_column:
+            customers_notes = customers_access_df[[id_column, 'Notes']].copy()
+            customers_notes = customers_notes[customers_notes['Notes'].notna()]  # Garder seulement les notes non vides
+            if len(customers_notes) > 0:
+                # Renommer la colonne ID pour cohérence
+                customers_notes.rename(columns={id_column: 'CustomerID'}, inplace=True)
+                dfs_to_export_raw['Customers_Access_Notes'] = customers_notes
+                print(f"  - Notes clients Access extraites : {len(customers_notes)} lignes")
+        elif 'Notes' in customers_access_df.columns:
+            # Si Notes existe mais pas d'ID, exporter juste les Notes
+            customers_notes = customers_access_df[['Notes']].copy()
+            customers_notes = customers_notes[customers_notes['Notes'].notna()]
+            if len(customers_notes) > 0:
+                dfs_to_export_raw['Customers_Access_Notes'] = customers_notes
+                print(f"  - Notes clients Access extraites : {len(customers_notes)} lignes (sans ID)")
+
+# Exportation de tous les fichiers RAW
+for name, df in dfs_to_export_raw.items():
+    file_path = os.path.join(RAW_OUTPUT_DIR, f'{name}.csv')
+    try:
+        df.to_csv(
+            file_path,
+            index=False,
+            sep=';',
+            encoding='utf-8'
+        )
+        print(f"  - Exportation de {name}.csv (RAW) réussie vers {RAW_OUTPUT_DIR} ({len(df)} lignes).")
+    except Exception as e:
+        print(f"  ❌ Échec de l'exportation de {name}.csv (RAW): {e}")
+
+print("--- Exportation des fichiers sources (RAW) terminée ---")
+
 # --- Démarrage de la Transformation (T) ---
 # =================================================================
 # =================================================================
@@ -158,22 +224,8 @@ else:
 if 'OrderDetails_Access' in data_access:
     # On concatène les données de SQL Server et Access.
     OrderDetails_Combined = pd.concat([data['OrderDetails'], data_access['OrderDetails_Access']], ignore_index=True)
-    print(f"  - Détails consolidés : {len(data['OrderDetails'])} (SQL) + {len(data_access['OrderDetails_Access'])} (Access) -> {len(OrderDetails_Combined)} (Total)")
-else:
-    OrderDetails_Combined = data['OrderDetails'].copy()
-    print("  - Utilisation uniquement des détails SQL Server.")
-# -----------------------------------------------------------------
-# 3.0 CONSOLIDATION DES DONNÉES DE FAITS (Orders et OrderDetails)
-# -----------------------------------------------------------------
-
-# ... (Le code pour Orders_Combined reste inchangé) ...
-
-# Consolidation des détails de commandes (OrderDetails)
-if 'OrderDetails_Access' in data_access:
-    # On concatène les données de SQL Server et Access.
-    OrderDetails_Combined = pd.concat([data['OrderDetails'], data_access['OrderDetails_Access']], ignore_index=True)
     
-    # === NOUVEAU : Dédupliquer les lignes de détail ===
+    # === Dédupliquer les lignes de détail ===
     # Une ligne est unique par la combinaison de l'OrderID et du ProductID.
     initial_len = len(OrderDetails_Combined)
     OrderDetails_Combined.drop_duplicates(subset=['OrderID', 'ProductID'], keep='first', inplace=True)
@@ -470,6 +522,7 @@ tables_a_charger = {
 }
 
 print("\n--- Démarrage du Chargement des tables ---")
+print("  ℹ️  Les données consolidées (SQL + Access) seront chargées dans NorthwindDW")
 
 # Boucle de chargement pour les Dimensions
 for table_name, df in tables_a_charger.items():
@@ -480,14 +533,23 @@ for table_name, df in tables_a_charger.items():
             if_exists='replace', # Écrase les tables à chaque exécution de l'ETL
             index=False          # N'écrit pas l'index de Pandas
         )
-        print(f"  - Chargement de la table {table_name} ({len(df)} lignes) réussi.")
+        # Message de confirmation pour les tables consolidées
+        if table_name == 'DimCustomers':
+            print(f"  ✅ Chargement de {table_name} ({len(df)} lignes) - Données consolidées SQL + Access")
+        elif table_name == 'DimProducts':
+            print(f"  ✅ Chargement de {table_name} ({len(df)} lignes) - Données consolidées SQL + Access")
+        elif table_name == 'DimSuppliers':
+            print(f"  ✅ Chargement de {table_name} ({len(df)} lignes) - Données consolidées SQL + Access")
+        else:
+            print(f"  ✅ Chargement de {table_name} ({len(df)} lignes) réussi.")
     except Exception as e:
         print(f"  ❌ Échec du chargement de la table {table_name}: {e}")
 
-# === NOUVEAU : CHARGEMENT DE FACTSALES SÉPARÉ (Plus sûr) ===
-# 1. Chargement dans une table de staging (Staging)
+# === CHARGEMENT DE FACTSALES SÉPARÉ (Plus sûr) ===
+# FactSales est créé à partir de Orders_Combined et OrderDetails_Combined (données consolidées SQL + Access)
 try:
     print(f"  - Chargement de la table FactSales dans STAGING ({len(FactSales)} lignes)...")
+    print(f"    ℹ️  FactSales contient les données consolidées : Orders (SQL + Access) et OrderDetails (SQL + Access)")
     FactSales.to_sql(
         name='FactSales_Staging', 
         con=sql_dw_engine, 
@@ -503,7 +565,8 @@ try:
         # Insère toutes les lignes de Staging dans FactSales
         connection.execute(text("INSERT INTO FactSales SELECT * FROM FactSales_Staging;"))
 
-    print(f"  - Chargement de la table FactSales ({len(FactSales)} lignes) réussi via Staging.")
+    print(f"  ✅ Chargement de la table FactSales ({len(FactSales)} lignes) réussi via Staging.")
+    print(f"    ✅ Données consolidées SQL + Access chargées dans NorthwindDW")
     
 except Exception as e:
     print(f"  ❌ Échec du chargement de la table FactSales: {e}")
